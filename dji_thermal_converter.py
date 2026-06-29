@@ -148,6 +148,20 @@ def main():
         else:
             logging.warning(f"No paired RGB found for {thermal_file} (index {index})")
 
+    # Save run parameters to a text file in the output directory
+    params_file = os.path.join(output_dir, 'run_params.txt')
+    with open(params_file, 'w') as f:
+        f.write(f"input_dir:            {args.input_dir}\n")
+        f.write(f"distance:             {args.distance} m\n")
+        f.write(f"humidity:             {args.humidity} %\n")
+        f.write(f"emissivity:           {args.emissivity}\n")
+        f.write(f"reflected_temp:       {args.reflected_temperature} °C\n")
+        f.write(f"ambient_temp:         {args.ambient_temperature} °C\n")
+        f.write(f"workers:              {args.workers}\n")
+        f.write(f"images_converted:     {len(input_files) - errors}\n")
+        f.write(f"errors:               {errors}\n")
+    logging.info(f'Parameters saved to {params_file}')
+
     logging.info(f'Done! {len(input_files) - errors} converted, {errors} errors.')
 
 
