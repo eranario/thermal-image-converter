@@ -64,6 +64,22 @@ def main():
     thermal_conv_dir = os.path.join(output_dir, 'thermal_conv')
     rgb_symlink_dir  = os.path.join(output_dir, 'rgb_symlink')
 
+    # Resolve and check SDK library before processing any files
+    if platform.system() == "Windows":
+        sdk_lib = "dji_thermal_sdk/utility/bin/windows/release_x64/libdirp.dll"
+    else:
+        sdk_lib = "dji_thermal_sdk/utility/bin/linux/release_x64/libdirp.so"
+
+    if not os.path.exists(sdk_lib):
+        logging.error(
+            f"DJI Thermal SDK library not found at: {os.path.abspath(sdk_lib)}\n"
+            "Download the SDK from https://www.dji.com/global/downloads/softwares/dji-thermal-sdk\n"
+            "and extract it so the above path exists."
+        )
+        return
+
+    dji_init(sdk_lib)
+
     os.makedirs(thermal_conv_dir, exist_ok=True)
     os.makedirs(rgb_symlink_dir,  exist_ok=True)
 
@@ -122,12 +138,6 @@ def jpg_to_thermal_tif(filename: str, input_folder: str, out_folder: str, args) 
         out_folder:   Path to the folder where the output TIFF is written.
         args:         Parsed argparse namespace with measurement parameters.
     """
-    if platform.system() == "Windows":
-        sdk_lib = "dji_thermal_sdk/utility/bin/windows/release_x64/libdirp.dll"
-    else:
-        sdk_lib = "dji_thermal_sdk/utility/bin/linux/release_x64/libdirp.so"
-    dji_init(sdk_lib)
-
     filepath = os.path.join(input_folder, filename)
     out_file = os.path.splitext(filename)[0] + '.tif'
     out_filepath = os.path.join(out_folder, out_file)
