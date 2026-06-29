@@ -24,8 +24,7 @@ def parse_args():
         description='Convert DJI thermal JPG images to GeoTIFF with Celsius values.'
     )
     parser.add_argument('--input-dir', type=str, default='input_images',
-                        help='Root flight folder. Thermal images are read from '
-                             '<input-dir>/raw_thermal/. Default: input_images')
+                        help='Folder containing _T.JPG and _V.JPG images. Default: input_images')
     parser.add_argument('--distance', type=float, default=5.0,
                         help='Distance to subject (m). Default: 5.0')
     parser.add_argument('--humidity', type=float, default=70.0,
@@ -53,13 +52,14 @@ def main():
 
     Expected input layout:
         <input-dir>/
-        └── raw_thermal/        — source _T.JPG and _V.JPG files
+        ├── DJI_..._T.JPG       — thermal images
+        └── DJI_..._V.JPG       — paired RGB images
 
     Output layout:
         <input-dir>/
         └── rgb_and_thermal_conv/
-            ├── *.tif           — converted GeoTIFFs
-            ├── *_V.JPG         — copied paired RGB images
+            ├── thermal_conv/   — converted GeoTIFFs
+            ├── rgb/            — copied paired RGB images
             └── run_params.txt  — parameters used for this run
 
     Requirements:
@@ -76,11 +76,14 @@ def main():
     )
     logging.info(f"Workers: {args.workers}")
 
-    raw_thermal_dir = os.path.join(args.input_dir, 'raw_thermal')
-    out_dir         = os.path.join(args.input_dir, 'rgb_and_thermal_conv')
+    input_dir        = args.input_dir
+    raw_thermal_dir  = os.path.join(input_dir, 'raw_thermal')
+    out_dir          = os.path.join(input_dir, 'rgb_and_thermal_conv')
+    thermal_conv_dir = os.path.join(out_dir, 'thermal_conv')
+    rgb_dir          = os.path.join(out_dir, 'rgb')
 
-    if not os.path.isdir(raw_thermal_dir):
-        logging.error(f"raw_thermal folder not found at: {os.path.abspath(raw_thermal_dir)}")
+    if not os.path.isdir(input_dir):
+        logging.error(f"Input folder not found: {os.path.abspath(input_dir)}")
         return
 
     # Resolve and check SDK library before processing any files
@@ -97,18 +100,30 @@ def main():
         )
         return
 
-    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(raw_thermal_dir,  exist_ok=True)
+    os.makedirs(thermal_conv_dir, exist_ok=True)
+    os.makedirs(rgb_dir,          exist_ok=True)
+
+    # Move _T.JPG files into raw_thermal/ and _V.JPG files into rgb/
+    for f in os.listdir(input_dir):
+        src = os.path.join(input_dir, f)
+        if not os.path.isfile(src):
+            continue
+        if f.endswith('_T.JPG'):
+            shutil.move(src, os.path.join(raw_thermal_dir, f))
+        elif f.endswith('_V.JPG'):
+            shutil.move(src, os.path.join(rgb_dir, f))
 
     input_files = [f for f in os.listdir(raw_thermal_dir) if f.endswith('_T.JPG')]
 
     if not input_files:
-        logging.warning(f'No _T.JPG thermal images found in {raw_thermal_dir}')
+        logging.warning(f'No _T.JPG thermal images found in {input_dir}')
         return
 
     logging.info(f'Converting {len(input_files)} thermal images...')
 
     tasks = [
-        (file, raw_thermal_dir, out_dir,
+        (file, raw_thermal_dir, thermal_conv_dir,
          args.distance, args.humidity, args.emissivity, args.reflected_temperature)
         for file in input_files
     ]
@@ -131,39 +146,32 @@ def main():
                 pbar.update(1)
 
     # Clean up exiftool backup files
-    for file in os.listdir(out_dir):
+    for file in os.listdir(thermal_conv_dir):
         if file.endswith('original'):
-            os.remove(os.path.join(out_dir, file))
+            os.remove(os.path.join(thermal_conv_dir, file))
 
-    # Copy paired RGB images into the output folder
+    # Warn for any thermal images with no matching RGB
     rgb_by_index = {}
-    for f in os.listdir(raw_thermal_dir):
+    for f in os.listdir(rgb_dir):
         if f.endswith('_V.JPG'):
             parts = f.split('_')
             if len(parts) >= 3:
                 rgb_by_index[parts[-2]] = f
 
-    logging.info('Copying paired RGB images...')
     rgb_missing = 0
     for thermal_file in input_files:
-        parts = thermal_file.split('_')
-        index = parts[-2] if len(parts) >= 3 else None
-        rgb_file = rgb_by_index.get(index)
-        if rgb_file:
-            shutil.copy2(
-                os.path.join(raw_thermal_dir, rgb_file),
-                os.path.join(out_dir, rgb_file),
-            )
-        else:
+        index = thermal_file.split('_')[-2]
+        if index not in rgb_by_index:
             logging.warning(f"No paired RGB found for {thermal_file} (index {index})")
             rgb_missing += 1
 
     # Save run parameters
     params_file = os.path.join(out_dir, 'run_params.txt')
     with open(params_file, 'w') as f:
-        f.write(f"input_dir:            {args.input_dir}\n")
+        f.write(f"input_dir:            {input_dir}\n")
         f.write(f"raw_thermal_dir:      {raw_thermal_dir}\n")
-        f.write(f"output_dir:           {out_dir}\n")
+        f.write(f"thermal_conv_dir:     {thermal_conv_dir}\n")
+        f.write(f"rgb_dir:              {rgb_dir}\n")
         f.write(f"distance:             {args.distance} m\n")
         f.write(f"humidity:             {args.humidity} %\n")
         f.write(f"emissivity:           {args.emissivity}\n")
