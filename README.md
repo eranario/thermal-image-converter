@@ -7,102 +7,91 @@ Converts DJI drone thermal JPEG images (R-JPEG) into single-band GeoTIFF files w
 - [Installation](#installation)
 - [Usage](#usage)
 - [Options](#options)
+- [Output Layout](#output-layout)
 - [Example](#example)
 - [License](#license)
 
 ## Requirements
 - Python 3.11+
 - [DJI Thermal SDK](https://www.dji.com/global/downloads/softwares/dji-thermal-sdk) (not included)
-- `exiftool` — included as `exiftool.exe` for Windows; on macOS/Linux install via your package manager
+- `exiftool` — handled automatically by `setup.sh` on Linux/WSL; included as `exiftool.exe` for Windows
 
 ## Installation
 
 1. **Clone the repository:**
    ```sh
-   git clone https://github.com/your-username/thermal-image-converter.git
+   git clone https://github.com/eranario/thermal-image-converter.git
    cd thermal-image-converter
    ```
 
-2. **Create a virtual environment and install dependencies with `uv`:**
+2. **Run the setup script** (installs exiftool, creates the Python environment, and checks for the DJI SDK):
    ```sh
-   uv venv
-   source .venv/bin/activate   # Windows: .venv\Scripts\activate
-   uv pip install -e .
-   ```
-
-   Or with plain `pip`:
-   ```sh
-   pip install dji-thermal-sdk rasterio tqdm
+   bash setup.sh
    ```
 
 3. **Download the [DJI Thermal SDK](https://www.dji.com/global/downloads/softwares/dji-thermal-sdk) and place its contents in a `dji_thermal_sdk/` folder:**
    ```
    dji_thermal_sdk/
-   ├── dataset/
-   ├── doc/
-   ├── sample/
-   ├── tsdk-core/
    ├── utility/
-   ├── History.txt
-   ├── License.txt
-   └── Readme.md
+   │   └── bin/
+   │       ├── linux/
+   │       │   └── release_x64/
+   │       │       └── libdirp.so
+   │       └── windows/
+   │           └── release_x64/
+   │               └── libdirp.dll
+   └── ...
    ```
 
-4. **Make sure `exiftool` is available:**
-   - Windows: `exiftool.exe` is included in the repository root.
-   - macOS: `brew install exiftool`
-   - Linux: `apt install libimage-exiftool-perl`
+4. **Activate the environment:**
+   ```sh
+   source .venv/bin/activate
+   ```
 
 ## Usage
 
-1. Place thermal JPEG images (files ending in `_T.JPG`) in the `input_images/` folder.
-2. Run the script:
-   ```sh
-   python dji_thermal_converter.py [OPTIONS]
-   ```
-3. Converted GeoTIFF files appear in `output_images/`.
+```sh
+python dji_thermal_converter.py --input-dir <path> [OPTIONS]
+```
+
+Point `--input-dir` at any folder containing DJI thermal images (files ending in `_T.JPG`). Converted TIFFs and RGB symlinks are written into an `output/` subfolder created inside that directory.
 
 ## Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--input-dir` | `input_images` | Path to folder containing `_T.JPG` thermal images |
 | `--distance` | `5.0` | Distance to subject (m) |
 | `--humidity` | `70.0` | Relative humidity (%) |
 | `--emissivity` | `1.0` | Surface emissivity (0–1) |
 | `--reflected-temperature` | `23.0` | Reflected/apparent temperature (°C) |
 | `--ambient-temperature` | `25.0` | Ambient temperature (°C) |
 
-> **Note:** The DJI Thermal SDK uses *reflected temperature* (`--reflected-temperature`) for atmosphere correction via the `reflection` field in `dirp_measurement_params_t`. `--ambient-temperature` is accepted on the CLI for logging/reference; the SDK does not expose a separate ambient-temperature field.
+> **Note:** The DJI Thermal SDK uses *reflected temperature* (`--reflected-temperature`) for atmosphere correction. `--ambient-temperature` is accepted for logging/reference; the SDK does not expose a separate ambient-temperature field.
+
+## Output Layout
+
+```
+<input-dir>/
+├── DJI_0001_T.JPG          ← source thermal image
+├── DJI_0001.JPG            ← source RGB image
+└── output/
+    ├── thermal_conv/
+    │   └── DJI_0001.tif    ← converted GeoTIFF (float32, °C per pixel)
+    └── rgb_symlink/
+        └── DJI_0001.JPG    ← symlink to paired RGB image
+```
 
 ## Example
 
 ```sh
-# Use default parameters
-python dji_thermal_converter.py
-
-# Custom measurement conditions
 python dji_thermal_converter.py \
+  --input-dir /mnt/data/flight_2024_06_29 \
   --distance 10 \
-  --humidity 60 \
+  --humidity 65 \
   --emissivity 0.95 \
   --reflected-temperature 22.0 \
   --ambient-temperature 25.0
-```
-
-Input:
-```
-input_images/
-├── image1_T.JPG
-├── image2_T.JPG
-└── image3_T.JPG
-```
-
-Output:
-```
-output_images/
-├── image1.tif
-├── image2.tif
-└── image3.tif
 ```
 
 ## License
