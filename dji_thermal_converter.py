@@ -87,7 +87,7 @@ def main():
 
     logging.info('Symlinking paired RGB images')
     for thermal_file in input_files:
-        rgb_file = thermal_file.replace('_T.JPG', '.JPG')
+        rgb_file = thermal_file.replace('_T.JPG', '_V.JPG')
         rgb_src  = os.path.abspath(os.path.join(input_folder, rgb_file))
         rgb_link = os.path.join(rgb_symlink_dir, rgb_file)
         if os.path.exists(rgb_src):

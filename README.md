@@ -74,12 +74,12 @@ Point `--input-dir` at any folder containing DJI thermal images (files ending in
 ```
 <input-dir>/
 ├── DJI_0001_T.JPG          ← source thermal image
-├── DJI_0001.JPG            ← source RGB image
+├── DJI_0001_V.JPG          ← source RGB image
 └── output/
     ├── thermal_conv/
-    │   └── DJI_0001.tif    ← converted GeoTIFF (float32, °C per pixel)
+    │   └── DJI_0001_T.tif  ← converted GeoTIFF (float32, °C per pixel)
     └── rgb_symlink/
-        └── DJI_0001.JPG    ← symlink to paired RGB image
+        └── DJI_0001_V.JPG  ← symlink to paired RGB image
 ```
 
 ## Example
