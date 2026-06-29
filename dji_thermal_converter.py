@@ -7,6 +7,7 @@ import rasterio
 import argparse
 import os
 import platform
+import shutil
 import subprocess
 import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -23,7 +24,8 @@ def parse_args():
         description='Convert DJI thermal JPG images to GeoTIFF with Celsius values.'
     )
     parser.add_argument('--input-dir', type=str, default='input_images',
-                        help='Path to folder containing _T.JPG thermal images. Default: input_images')
+                        help='Root flight folder. Thermal images are read from '
+                             '<input-dir>/raw_thermal/. Default: input_images')
     parser.add_argument('--distance', type=float, default=5.0,
                         help='Distance to subject (m). Default: 5.0')
     parser.add_argument('--humidity', type=float, default=70.0,
@@ -46,17 +48,23 @@ def _worker_init(sdk_lib):
 
 def main():
     """
-    Converts all thermal JPG images in the input folder to TIFF format with
-    Celsius temperature values, and symlinks paired RGB images.
+    Converts all thermal JPG images in <input-dir>/raw_thermal/ to GeoTIFF
+    format with Celsius temperature values, and copies paired RGB images.
 
-    Output layout inside the input folder:
-        output/thermal_conv/   — converted GeoTIFF files
-        output/rgb_symlink/    — symlinks to paired RGB JPGs (_V.JPG counterparts)
+    Expected input layout:
+        <input-dir>/
+        └── raw_thermal/        — source _T.JPG and _V.JPG files
+
+    Output layout:
+        <input-dir>/
+        └── rgb_and_thermal_conv/
+            ├── *.tif           — converted GeoTIFFs
+            ├── *_V.JPG         — copied paired RGB images
+            └── run_params.txt  — parameters used for this run
 
     Requirements:
-        - "dji_thermal_sdk" folder in the directory containing libdirp.so/.dll
+        - "dji_thermal_sdk" folder in the repo root containing libdirp.so/.dll
         - "exiftool" on PATH
-        - Input images in --input-dir (files ending in _T.JPG)
     """
     args = parse_args()
 
@@ -68,10 +76,12 @@ def main():
     )
     logging.info(f"Workers: {args.workers}")
 
-    input_folder     = args.input_dir
-    output_dir       = os.path.join(input_folder, 'output')
-    thermal_conv_dir = os.path.join(output_dir, 'thermal_conv')
-    rgb_symlink_dir  = os.path.join(output_dir, 'rgb_symlink')
+    raw_thermal_dir = os.path.join(args.input_dir, 'raw_thermal')
+    out_dir         = os.path.join(args.input_dir, 'rgb_and_thermal_conv')
+
+    if not os.path.isdir(raw_thermal_dir):
+        logging.error(f"raw_thermal folder not found at: {os.path.abspath(raw_thermal_dir)}")
+        return
 
     # Resolve and check SDK library before processing any files
     if platform.system() == "Windows":
@@ -87,19 +97,18 @@ def main():
         )
         return
 
-    os.makedirs(thermal_conv_dir, exist_ok=True)
-    os.makedirs(rgb_symlink_dir,  exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True)
 
-    input_files = [f for f in os.listdir(input_folder) if f.endswith('_T.JPG')]
+    input_files = [f for f in os.listdir(raw_thermal_dir) if f.endswith('_T.JPG')]
 
     if not input_files:
-        logging.warning('No thermal images found in the input directory.')
+        logging.warning(f'No _T.JPG thermal images found in {raw_thermal_dir}')
         return
 
     logging.info(f'Converting {len(input_files)} thermal images...')
 
     tasks = [
-        (file, input_folder, thermal_conv_dir,
+        (file, raw_thermal_dir, out_dir,
          args.distance, args.humidity, args.emissivity, args.reflected_temperature)
         for file in input_files
     ]
@@ -121,37 +130,40 @@ def main():
                     errors += 1
                 pbar.update(1)
 
-    # Clean up exiftool backup files written alongside the TIFFs
-    for file in os.listdir(thermal_conv_dir):
+    # Clean up exiftool backup files
+    for file in os.listdir(out_dir):
         if file.endswith('original'):
-            os.remove(os.path.join(thermal_conv_dir, file))
+            os.remove(os.path.join(out_dir, file))
 
-    # Build index → V filename map (DJI _T and _V names share index but differ in timestamp)
+    # Copy paired RGB images into the output folder
     rgb_by_index = {}
-    for f in os.listdir(input_folder):
+    for f in os.listdir(raw_thermal_dir):
         if f.endswith('_V.JPG'):
             parts = f.split('_')
             if len(parts) >= 3:
                 rgb_by_index[parts[-2]] = f
 
-    logging.info('Symlinking paired RGB images')
+    logging.info('Copying paired RGB images...')
+    rgb_missing = 0
     for thermal_file in input_files:
         parts = thermal_file.split('_')
         index = parts[-2] if len(parts) >= 3 else None
         rgb_file = rgb_by_index.get(index)
         if rgb_file:
-            rgb_src  = os.path.abspath(os.path.join(input_folder, rgb_file))
-            rgb_link = os.path.join(rgb_symlink_dir, rgb_file)
-            if os.path.islink(rgb_link):
-                os.remove(rgb_link)
-            os.symlink(rgb_src, rgb_link)
+            shutil.copy2(
+                os.path.join(raw_thermal_dir, rgb_file),
+                os.path.join(out_dir, rgb_file),
+            )
         else:
             logging.warning(f"No paired RGB found for {thermal_file} (index {index})")
+            rgb_missing += 1
 
-    # Save run parameters to a text file in the output directory
-    params_file = os.path.join(output_dir, 'run_params.txt')
+    # Save run parameters
+    params_file = os.path.join(out_dir, 'run_params.txt')
     with open(params_file, 'w') as f:
         f.write(f"input_dir:            {args.input_dir}\n")
+        f.write(f"raw_thermal_dir:      {raw_thermal_dir}\n")
+        f.write(f"output_dir:           {out_dir}\n")
         f.write(f"distance:             {args.distance} m\n")
         f.write(f"humidity:             {args.humidity} %\n")
         f.write(f"emissivity:           {args.emissivity}\n")
@@ -159,7 +171,8 @@ def main():
         f.write(f"ambient_temp:         {args.ambient_temperature} °C\n")
         f.write(f"workers:              {args.workers}\n")
         f.write(f"images_converted:     {len(input_files) - errors}\n")
-        f.write(f"errors:               {errors}\n")
+        f.write(f"conversion_errors:    {errors}\n")
+        f.write(f"rgb_missing:          {rgb_missing}\n")
     logging.info(f'Parameters saved to {params_file}')
 
     logging.info(f'Done! {len(input_files) - errors} converted, {errors} errors.')
