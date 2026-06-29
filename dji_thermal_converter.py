@@ -6,6 +6,7 @@ from ctypes import *
 import rasterio
 import argparse
 import os
+import platform
 import subprocess
 import logging
 from tqdm import tqdm
@@ -30,27 +31,24 @@ def parse_args():
                         help='Ambient temperature (°C). Default: 25.0')
     parser.add_argument('--reflected-temperature', type=float, default=23.0,
                         help='Reflected temperature (°C). Default: 23.0')
+    parser.add_argument('--input-dir', type=str, default='input_images',
+                        help='Path to folder containing _T.JPG thermal images. Default: input_images')
     return parser.parse_args()
 
 
 def main():
     """
-    Converts all thermal JPG images in the "input_images" folder to TIFF format
-    with Celsius temperature values. Resulting images are located in the
-    "output_images" folder.
+    Converts all thermal JPG images in the input folder to TIFF format with
+    Celsius temperature values, and symlinks paired RGB images.
+
+    Output layout inside the input folder:
+        thermal_conv/   — converted GeoTIFF files
+        rgb_symlink/    — symlinks to paired RGB JPGs (same base name, no _T)
 
     Requirements:
         - "dji_thermal_sdk" folder in the directory
         - "exiftool" / "exiftool.exe" on PATH or in the directory
-        - Input images should be in "input_images" folder
-        - Output images will be saved in "output_images" folder
-
-    Steps:
-        1. List all thermal JPG images in the input folder.
-        2. Convert each image to TIFF format with temperature values in a single
-           layer using the provided measurement parameters.
-        3. Move TIFF files to the output folder.
-        4. Delete temporary files.
+        - Input images in the input folder (files ending in _T.JPG)
     """
     args = parse_args()
 
@@ -61,10 +59,13 @@ def main():
         f"ambient temp: {args.ambient_temperature} °C"
     )
 
-    input_folder = 'input_images'
-    output_folder = 'output_images'
+    input_folder = args.input_dir
+    output_dir       = os.path.join(input_folder, 'output')
+    thermal_conv_dir = os.path.join(output_dir, 'thermal_conv')
+    rgb_symlink_dir  = os.path.join(output_dir, 'rgb_symlink')
 
-    os.makedirs(output_folder, exist_ok=True)
+    os.makedirs(thermal_conv_dir, exist_ok=True)
+    os.makedirs(rgb_symlink_dir,  exist_ok=True)
 
     input_files = [f for f in os.listdir(input_folder) if f.endswith('_T.JPG')]
 
@@ -75,41 +76,50 @@ def main():
     logging.info('Converting thermal JPG files to thermal TIFF files')
     for file in tqdm(input_files):
         try:
-            jpg_to_thermal_tif(file, input_folder, args)
+            jpg_to_thermal_tif(file, input_folder, thermal_conv_dir, args)
         except Exception as e:
             logging.error(f"Error converting {file}: {e}")
 
-    tif_files = [f for f in os.listdir(input_folder) if f.endswith('.tif')]
-    no_meta_tif_files = [f for f in os.listdir(input_folder) if f.endswith('original')]
+    # Clean up exiftool backup files written alongside the TIFFs
+    for file in os.listdir(thermal_conv_dir):
+        if file.endswith('original'):
+            os.remove(os.path.join(thermal_conv_dir, file))
 
-    logging.info('Moving TIFF files')
-    for file in tif_files:
-        os.rename(os.path.join(input_folder, file),
-                  os.path.join(output_folder, file))
-
-    logging.info('Deleting temporary files')
-    for file in no_meta_tif_files:
-        os.remove(os.path.join(input_folder, file))
+    logging.info('Symlinking paired RGB images')
+    for thermal_file in input_files:
+        rgb_file = thermal_file.replace('_T.JPG', '.JPG')
+        rgb_src  = os.path.abspath(os.path.join(input_folder, rgb_file))
+        rgb_link = os.path.join(rgb_symlink_dir, rgb_file)
+        if os.path.exists(rgb_src):
+            if os.path.islink(rgb_link):
+                os.remove(rgb_link)
+            os.symlink(rgb_src, rgb_link)
+        else:
+            logging.warning(f"No paired RGB found for {thermal_file} (expected {rgb_file})")
 
     logging.info('Done!')
 
 
-def jpg_to_thermal_tif(filename: str, input_folder: str, args) -> None:
+def jpg_to_thermal_tif(filename: str, input_folder: str, out_folder: str, args) -> None:
     """
     Converts an RJPEG thermal image to TIF format with a single layer containing
     temperature values in Celsius, applying custom measurement parameters.
 
     Args:
         filename:     Name of the file inside input_folder.
-        input_folder: Path to the folder containing the image files.
+        input_folder: Path to the folder containing the source image.
+        out_folder:   Path to the folder where the output TIFF is written.
         args:         Parsed argparse namespace with measurement parameters.
     """
-    dll_path = "dji_thermal_sdk/utility/bin/windows/release_x64/libdirp.dll"
-    dji_init(dll_path)
+    if platform.system() == "Windows":
+        sdk_lib = "dji_thermal_sdk/utility/bin/windows/release_x64/libdirp.dll"
+    else:
+        sdk_lib = "dji_thermal_sdk/utility/bin/linux/release_x64/libdirp.so"
+    dji_init(sdk_lib)
 
     filepath = os.path.join(input_folder, filename)
     out_file = os.path.splitext(filename)[0] + '.tif'
-    out_filepath = os.path.join(input_folder, out_file)
+    out_filepath = os.path.join(out_folder, out_file)
 
     # Create the DIRP handle for this image
     ret = getJPEGHandle(filepath)
