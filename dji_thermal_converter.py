@@ -85,17 +85,28 @@ def main():
         if file.endswith('original'):
             os.remove(os.path.join(thermal_conv_dir, file))
 
+    # Build index → V filename map (DJI names differ in timestamp but share index)
+    # Format: DJI_{timestamp}_{index}_V.JPG
+    rgb_by_index = {}
+    for f in os.listdir(input_folder):
+        if f.endswith('_V.JPG'):
+            parts = f.split('_')
+            if len(parts) >= 3:
+                rgb_by_index[parts[-2]] = f
+
     logging.info('Symlinking paired RGB images')
     for thermal_file in input_files:
-        rgb_file = thermal_file.replace('_T.JPG', '_V.JPG')
-        rgb_src  = os.path.abspath(os.path.join(input_folder, rgb_file))
-        rgb_link = os.path.join(rgb_symlink_dir, rgb_file)
-        if os.path.exists(rgb_src):
+        parts = thermal_file.split('_')
+        index = parts[-2] if len(parts) >= 3 else None
+        rgb_file = rgb_by_index.get(index)
+        if rgb_file:
+            rgb_src  = os.path.abspath(os.path.join(input_folder, rgb_file))
+            rgb_link = os.path.join(rgb_symlink_dir, rgb_file)
             if os.path.islink(rgb_link):
                 os.remove(rgb_link)
             os.symlink(rgb_src, rgb_link)
         else:
-            logging.warning(f"No paired RGB found for {thermal_file} (expected {rgb_file})")
+            logging.warning(f"No paired RGB found for {thermal_file} (index {index})")
 
     logging.info('Done!')
 
