@@ -6,4 +6,5 @@ dependencies = [
     "dji-thermal-sdk>=0.0.2",
     "rasterio>=1.3",
     "tqdm>=4.0",
+    "pandas>=2.0",
 ]
